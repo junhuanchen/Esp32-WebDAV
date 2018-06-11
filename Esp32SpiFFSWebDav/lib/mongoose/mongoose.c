@@ -10205,7 +10205,7 @@ FILE *mg_fopen(const char *path, const char *mode_s) {
     }
     return NULL;
 #else
-  return fopen(path, mode);
+  return fopen(path, mode_s);
 #endif
 }
 
