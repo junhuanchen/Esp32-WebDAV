@@ -700,43 +700,54 @@ FATFS *mongoose_vfs; // import fs var
 #define opendir mg_opendir
 DIR *mg_opendir(const char *path) {
     DIR *dir = malloc(sizeof(DIR));
+    memset(dir, 0, sizeof(DIR));
     if(NULL != dir)
     {
+        LOG(LL_INFO, ("mg_opendir dir %p", dir));
         if(FR_OK == f_opendir(mongoose_vfs, dir, path))
         {
+            LOG(LL_INFO, ("f_opendir"));
             return dir;
         }
     }
+    free(dir);
     return NULL;
 }
 
 struct dirent
 {
-    char d_name[14];
+    char d_name[16];
 };
 
 #define readdir mg_readdir
 struct dirent *mg_readdir(DIR *dir) {
+    LOG(LL_INFO, ("readdir dir %p", dir));
     static struct dirent result;
     FILINFO fno;
     FRESULT res = f_readdir(dir, &fno);
-    if((res == FR_OK && fno.fname[0] != 0)) 
+    LOG(LL_INFO, ("f_readdir res %d", res == FR_OK));
+    if(res == FR_OK && fno.fname[0] != 0) 
     {
         memset(&result, 0, sizeof(result));
-        memcpy(result.d_name, fno.fname, sizeof(fno.fname)); // only used d_name
+        memcpy(result.d_name, fno.fname, strlen(fno.fname)); // only used d_name
+        LOG(LL_INFO, ("res %d fno.fname %s dir %p\n", res, fno.fname, dir));
         return &result;
     }
+    LOG(LL_INFO, ("fail"));
     return NULL;
 }
 
 #define closedir mg_closedir
 void mg_closedir(DIR *dir) {
+    LOG(LL_INFO, ("mg_closedir f_closedir %p\n", dir));
     f_closedir(dir);
+    LOG(LL_INFO, ("mg_closedir free"));
     free(dir);
 }
 
 #define fclose mg_fclose
 void mg_fclose(FILE *file) {
+    LOG(LL_INFO, ("mg_fclose f_close %p\n", file));
     f_close((FIL *)file);
 }
 
@@ -7198,7 +7209,9 @@ static int mg_is_file_hidden(const char *path,
                              int exclude_specials) {
   const char *p1 = opts->per_directory_auth_file;
   const char *p2 = opts->hidden_file_pattern;
-
+  
+  LOG(LL_DEBUG, ("p1 %s p2 %s path %s", p1, p2, path));
+  
   /* Strip directory path from the file name */
   const char *pdir = strrchr(path, DIRSEP);
   if (pdir != NULL) {
@@ -7484,24 +7497,28 @@ static void mg_scan_directory(struct mg_connection *nc, const char *dir,
   struct dirent *dp;
   DIR *dirp;
 
-  LOG(LL_DEBUG, ("%p [%s]", nc, dir));
-  if ((dirp = (opendir(dir))) != NULL) {
-    while ((dp = readdir(dirp)) != NULL) {
-      /* Do not show current dir and hidden files */
-      if (mg_is_file_hidden((const char *) dp->d_name, opts, 1)) {
-        continue;
-      }
-      snprintf(path, sizeof(path), "%s/%s", dir, dp->d_name);
-      LOG(LL_DEBUG, ("readdir %s/%s path %s\n", dir, dp->d_name, path));
-      if (mg_stat(path, &st) == 0) {
-        func(nc, (const char *) dp->d_name, &st);
-        // func(nc, (const char *) path, &st);
-      }
+    LOG(LL_DEBUG, ("%p [%s]", nc, dir));
+    if ((dirp = opendir(dir)) != NULL) {
+        LOG(LL_DEBUG, ("opendir dirp %p\n", dirp));
+        while ((dp = readdir(dirp)) != NULL) {
+            LOG(LL_DEBUG, ("readdir %s/%s\n", dir, dp->d_name));
+            /* Do not show current dir and hidden files
+            if (mg_is_file_hidden((const char *) dp->d_name, opts, 1)) {
+                continue;
+            }
+            */
+            snprintf(path, sizeof(path), "%s/%s", dir, dp->d_name);
+            LOG(LL_DEBUG, ("path %s\n", path));
+            if (mg_stat(path, &st) == 0) {
+                func(nc, (const char *) dp->d_name, &st);
+                // func(nc, (const char *) path, &st);
+            }
+        }
+        LOG(LL_DEBUG, ("closedir"));
+        closedir(dirp);
+    } else {
+        LOG(LL_DEBUG, ("%p opendir(%s) -> %d", nc, dir, mg_get_errno()));
     }
-    closedir(dirp);
-  } else {
-    LOG(LL_DEBUG, ("%p opendir(%s) -> %d", nc, dir, mg_get_errno()));
-  }
 }
 
 static void mg_send_directory_listing(struct mg_connection *nc, const char *dir,
@@ -10083,6 +10100,10 @@ int mg_stat(const char *path, cs_stat_t *st) {
   DBG(("[%ls] -> %d", wpath, _wstati64(wpath, st)));
   return _wstati64(wpath, st);
 #elif CS_P_ESP32
+    // Junhuan 2018年4月24日
+    // ESP32 spifffs stat 函数 _IFDIR 部分工作不正常，因为不能修改库bug，
+    // ESP32 vfs stat 函数 同上，
+    // 只能通过需要的部分额外调用openDir，但可能会导致个别地方反复调用导致冲突。
     #ifdef ESP32_FATFS
     LOG(LL_DEBUG, ("mongoose_vfs %p path %s", mongoose_vfs, path));
     if(NULL != mongoose_vfs) 
@@ -10095,6 +10116,7 @@ int mg_stat(const char *path, cs_stat_t *st) {
             {
                 st->st_mode.fattrib = AM_ARC;
                 st->st_size = st->st_mode.fsize;
+                LOG(LL_DEBUG, ("fdate %d ftime %d", st->st_mode.fdate, st->st_mode.ftime));
                 st->st_mtime = (((time_t)st->st_mode.fdate) << 31) || st->st_mode.ftime;
                 LOG(LL_DEBUG, ("file %lld", st->st_size));
             }
@@ -10123,6 +10145,7 @@ int mg_stat(const char *path, cs_stat_t *st) {
                         {
                             st->st_mode.fattrib = AM_ARC;
                             st->st_size = fno.fsize;
+                            LOG(LL_DEBUG, ("fdate %d ftime %d", fno.fdate, fno.ftime));
                             st->st_mtime = (((time_t)fno.fdate) << 31) || fno.ftime;
                             f_close(&fp);
                             LOG(LL_DEBUG, ("file %lld", st->st_size));
@@ -10140,8 +10163,6 @@ int mg_stat(const char *path, cs_stat_t *st) {
     }
     return -1;
     #else
-    // ESP32 spifffs and vfs stat function _IFDIR not working, and dont modity fs's lib.
-    // so used openDir get _IFDIR for stat
     int result = stat(path, st);
     if(-1 == result)
     {

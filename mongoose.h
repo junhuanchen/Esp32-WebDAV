@@ -510,7 +510,6 @@ typedef struct stat cs_stat_t;
 #include <string.h>
 #include <sys/time.h>
 
-#define CS_NDEBUG
 // #define MG_ENABLE_DEBUG 1
 
 #define ESP32_FATFS 1
@@ -4078,7 +4077,7 @@ extern "C" {
 #ifdef PATH_MAX
 #define MG_MAX_PATH PATH_MAX
 #else
-#define MG_MAX_PATH 256
+#define MG_MAX_PATH 16
 #endif
 #endif
 
